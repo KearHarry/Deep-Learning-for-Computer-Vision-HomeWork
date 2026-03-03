@@ -463,7 +463,9 @@ def zero_row_min(x: Tensor) -> Tensor:
     #                      TODO: Implement this function                     #
     ##########################################################################
     # Replace "pass" statement with your code
-    pass
+    y = x.clone()
+    _, row_min_idxs = x.min(dim=1)
+    y[torch.arange(x.shape[0]), row_min_idxs] = 0
     ##########################################################################
     #                            END OF YOUR CODE                            #
     ##########################################################################
@@ -494,6 +496,7 @@ def batched_matrix_multiply(
     if use_loop:
         return batched_matrix_multiply_loop(x, y)
     else:
+
         return batched_matrix_multiply_noloop(x, y)
 
 
@@ -519,7 +522,11 @@ def batched_matrix_multiply_loop(x: Tensor, y: Tensor) -> Tensor:
     #                      TODO: Implement this function                      #
     ###########################################################################
     # Replace "pass" statement with your code
-    pass
+    B, N, M = x.shape
+    _, _, P = y.shape
+    z = torch.zeros(B, N, P, dtype=x.dtype, device=x.device)
+    for i in range(B):
+        z[i] = x[i].mm(y[i])
     ###########################################################################
     #                           END OF YOUR CODE                              #
     ###########################################################################
@@ -550,7 +557,7 @@ def batched_matrix_multiply_noloop(x: Tensor, y: Tensor) -> Tensor:
     #                      TODO: Implement this function                      #
     ###########################################################################
     # Replace "pass" statement with your code
-    pass
+    z = torch.bmm(x, y)
     ###########################################################################
     #                            END OF YOUR CODE                             #
     ###########################################################################
@@ -585,7 +592,12 @@ def normalize_columns(x: Tensor) -> Tensor:
     #                      TODO: Implement this function                     #
     ##########################################################################
     # Replace "pass" statement with your code
-    pass
+    M, N = x.shape
+    col_sum = x.sum(dim=0)
+    col_mean = col_sum / M
+    col_var = ((x - col_mean) ** 2).sum(dim=0)
+    col_std = torch.sqrt(col_var / (M-1))
+    y = (x - col_mean) / col_std
     ##########################################################################
     #                            END OF YOUR CODE                            #
     ##########################################################################
@@ -632,7 +644,10 @@ def mm_on_gpu(x: Tensor, w: Tensor) -> Tensor:
     #                      TODO: Implement this function                     #
     ##########################################################################
     # Replace "pass" statement with your code
-    pass
+    x_gpu = x.cuda()
+    w_gpu = w.cuda()
+    y_gpu = x_gpu.mm(w_gpu)
+    y = y_gpu.cpu()
     ##########################################################################
     #                            END OF YOUR CODE                            #
     ##########################################################################
@@ -666,7 +681,26 @@ def challenge_mean_tensors(xs: List[Tensor], ls: Tensor) -> Tensor:
     # mean values as a tensor in `y`.                                        #
     ##########################################################################
     # Replace "pass" statement with your code
-    pass
+    # Concatenate all 1D tensors into a single tensor
+    flat_x = torch.cat(xs)
+
+    # Compute cumulative sum. We cast to float to support mean calculation later.
+    x_cumsum = torch.cumsum(flat_x.float(), dim=0)
+
+    # Determine the end indices of each chunk in the flattened tensor
+    end_indices = torch.cumsum(ls, dim=0) - 1
+
+    # Extract the cumulative sum values at the end of each chunk
+    pass_sums = x_cumsum[end_indices]
+
+    # Compute the actual sum of each chunk
+    # sum[i] = cumsum[end[i]] - cumsum[end[i-1]]
+    # For the first element, sum[0] = cumsum[end[0]]
+    chunk_sums = pass_sums.clone()
+    chunk_sums[1:] = pass_sums[1:] - pass_sums[:-1]
+
+    # Compute mean
+    y = chunk_sums / ls
     ##########################################################################
     #                            END OF YOUR CODE                            #
     ##########################################################################
@@ -706,7 +740,24 @@ def challenge_get_uniques(x: torch.Tensor) -> Tuple[Tensor, Tensor]:
     # O(N) memory.                                                           #
     ##########################################################################
     # Replace "pass" statement with your code
-    pass
+    if x.numel() == 0:
+        return x, x
+
+    # Stable sort the input tensor. This groups duplicate values together
+    # while preserving their relative order (essential for finding first occurrence).
+    sorted_x, sort_idx = x.sort(stable=True)
+
+    # Create a mask to identify unique values.
+    # A value is unique if it differs from the previous value in the sorted array.
+    # The first element is always unique.
+    unique_mask = torch.cat([
+        torch.tensor([True], device=x.device, dtype=torch.bool),
+        sorted_x[1:] != sorted_x[:-1]
+    ])
+
+    # Apply the mask to extract unique values and their original first indices
+    uniques = sorted_x[unique_mask]
+    indices = sort_idx[unique_mask]
     ##########################################################################
     #                            END OF YOUR CODE                            #
     ##########################################################################
