@@ -1,0 +1,17 @@
+# User specified
+.idea/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# Virtual Environment (Generic)
+venv/
+.env
+.venv
+
