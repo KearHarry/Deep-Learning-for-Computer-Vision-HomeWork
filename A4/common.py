@@ -83,8 +83,21 @@ class DetectorBackboneWithFPN(nn.Module):
         # Add THREE lateral 1x1 conv and THREE output 3x3 conv layers.
         self.fpn_params = nn.ModuleDict()
 
-        # Replace "pass" statement with your code
-        pass
+        # Convert to dictionary for easy access
+        dummy_shapes = dict(dummy_out_shapes)
+
+        # Iterate over levels to create layers
+        for level in ["c3", "c4", "c5"]:
+            # Lateral 1x1 conv
+            self.fpn_params[f"lateral_{level}"] = nn.Conv2d(
+                dummy_shapes[level][1], out_channels, kernel_size=1, stride=1, padding=0
+            )
+            # Output 3x3 conv
+            p_level = level.replace("c", "p")
+            self.fpn_params[f"output_{p_level}"] = nn.Conv2d(
+                out_channels, out_channels, kernel_size=3, stride=1, padding=1
+            )
+
         ######################################################################
         #                            END OF YOUR CODE                        #
         ######################################################################
@@ -98,6 +111,10 @@ class DetectorBackboneWithFPN(nn.Module):
         """
         return {"p3": 8, "p4": 16, "p5": 32}
 
+    @property
+    def strides_per_fpn_level(self):
+        return self.fpn_strides
+
     def forward(self, images: torch.Tensor):
 
         # Multi-scale features, dictionary with keys: {"c3", "c4", "c5"}.
@@ -110,8 +127,36 @@ class DetectorBackboneWithFPN(nn.Module):
         # HINT: Use `F.interpolate` to upsample FPN features.                #
         ######################################################################
 
-        # Replace "pass" statement with your code
-        pass
+        # Get features from backbone
+        c3 = backbone_feats["c3"]
+        c4 = backbone_feats["c4"]
+        c5 = backbone_feats["c5"]
+
+        # FPN Top-down pathway
+        # Level 5 (p5)
+        # Just 1x1 conv on C5
+        m5 = self.fpn_params["lateral_c5"](c5)
+        p5 = self.fpn_params["output_p5"](m5)
+        fpn_feats["p5"] = p5
+
+        # Level 4 (p4)
+        # 1x1 conv on C4 + upsampled M5
+        m4_lateral = self.fpn_params["lateral_c4"](c4)
+        # Upsample m5 to match size of m4_lateral
+        m4_topdown = F.interpolate(m5, size=m4_lateral.shape[-2:], mode="nearest")
+        m4 = m4_lateral + m4_topdown
+        p4 = self.fpn_params["output_p4"](m4)
+        fpn_feats["p4"] = p4
+
+        # Level 3 (p3)
+        # 1x1 conv on C3 + upsampled M4
+        m3_lateral = self.fpn_params["lateral_c3"](c3)
+        # Upsample m4 to match size of m3_lateral
+        m3_topdown = F.interpolate(m4, size=m3_lateral.shape[-2:], mode="nearest")
+        m3 = m3_lateral + m3_topdown
+        p3 = self.fpn_params["output_p3"](m3)
+        fpn_feats["p3"] = p3
+
         ######################################################################
         #                            END OF YOUR CODE                        #
         ######################################################################
@@ -157,7 +202,20 @@ def get_fpn_location_coords(
         # TODO: Implement logic to get location co-ordinates below.          #
         ######################################################################
         # Replace "pass" statement with your code
-        pass
+        _, _, H, W = feat_shape
+        shift_x = torch.arange(0, W, device=device, dtype=dtype)
+        shift_y = torch.arange(0, H, device=device, dtype=dtype)
+
+        # Determine grid of center coordinates
+        shift_y, shift_x = torch.meshgrid(shift_y, shift_x, indexing='ij')
+
+        # Map to image coordinates: center of receptive field
+        xc = (shift_x + 0.5) * level_stride
+        yc = (shift_y + 0.5) * level_stride
+
+        # Stack to (H*W, 2)
+        locations = torch.stack((xc, yc), dim=-1).reshape(-1, 2)
+        location_coords[level_name] = locations
         ######################################################################
         #                             END OF YOUR CODE                       #
         ######################################################################
@@ -196,7 +254,40 @@ def nms(boxes: torch.Tensor, scores: torch.Tensor, iou_threshold: float = 0.5):
     # github.com/pytorch/vision/blob/main/torchvision/csrc/ops/cpu/nms_kernel.cpp
     #############################################################################
     # Replace "pass" statement with your code
-    pass
+    # Sort scores in descending order and get corresponding indices
+    sorted_indices = torch.argsort(scores, descending=True)
+    keep_indices = []
+    while sorted_indices.numel() > 0:
+        # Select the highest-scoring box
+        current_index = sorted_indices[0]
+        keep_indices.append(current_index.item())
+
+        if sorted_indices.numel() == 1:
+            break
+
+        # Get the remaining boxes and scores
+        remaining_indices = sorted_indices[1:]
+        remaining_boxes = boxes[remaining_indices]
+        current_box = boxes[current_index]
+
+        # Compute IoU between the current box and remaining boxes
+        x1 = torch.max(current_box[0], remaining_boxes[:, 0])
+        y1 = torch.max(current_box[1], remaining_boxes[:, 1])
+        x2 = torch.min(current_box[2], remaining_boxes[:, 2])
+        y2 = torch.min(current_box[3], remaining_boxes[:, 3])
+
+        inter_area = torch.clamp(x2 - x1, min=0) * torch.clamp(y2 - y1, min=0)
+        current_area = (current_box[2] - current_box[0]) * (current_box[3] - current_box[1])
+        remaining_area = (remaining_boxes[:, 2] - remaining_boxes[:, 0]) * (remaining_boxes[:, 3] - remaining_boxes[:, 1])
+        union_area = current_area + remaining_area - inter_area
+
+        iou = inter_area / union_area
+
+        # Keep boxes with IoU <= threshold
+        keep_mask = iou <= iou_threshold
+        sorted_indices = remaining_indices[keep_mask]
+
+    keep = torch.tensor(keep_indices, device=boxes.device, dtype=torch.long)
     #############################################################################
     #                              END OF YOUR CODE                             #
     #############################################################################

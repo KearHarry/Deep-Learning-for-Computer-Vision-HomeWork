@@ -203,6 +203,9 @@ def train_detector(
     Train the detector. We use SGD with momentum and step decay.
     """
 
+    # Enable cuDNN benchmark for fixed input sizes - speeds up convolutions.
+    torch.backends.cudnn.benchmark = True
+
     detector.to(device=device)
 
     # Optimizer: use SGD with momentum.
@@ -221,6 +224,10 @@ def train_detector(
     # Keep track of training loss for plotting.
     loss_history = []
 
+    # AMP: GradScaler for mixed precision training on CUDA
+    use_amp = (device != "cpu" and str(device) != "cpu")
+    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+
     train_loader = infinite_loader(train_loader)
     detector.train()
 
@@ -228,19 +235,28 @@ def train_detector(
         # Ignore first arg (image path) during training.
         _, images, gt_boxes = next(train_loader)
 
-        images = images.to(device)
-        gt_boxes = gt_boxes.to(device)
+        images = images.to(device, non_blocking=True)
+        gt_boxes = gt_boxes.to(device, non_blocking=True)
 
         # Dictionary of loss scalars.
-        losses = detector(images, gt_boxes)
+        with torch.cuda.amp.autocast(enabled=use_amp):
+            losses = detector(images, gt_boxes)
 
         # Ignore keys like "proposals" in RPN.
         losses = {k: v for k, v in losses.items() if "loss" in k}
 
-        optimizer.zero_grad()
+        optimizer.zero_grad(set_to_none=True)
         total_loss = sum(losses.values())
-        total_loss.backward()
-        optimizer.step()
+
+        # AMP: scale loss and backward
+        scaler.scale(total_loss).backward()
+
+        # Add gradient clipping to prevent exploding gradients
+        scaler.unscale_(optimizer)
+        torch.nn.utils.clip_grad_norm_(detector.parameters(), max_norm=5.0)
+
+        scaler.step(optimizer)
+        scaler.update()
         lr_scheduler.step()
 
         # Print losses periodically.
@@ -314,8 +330,8 @@ def inference_with_detector(
                 )
 
         # Skip current iteration if no predictions were found.
-        if pred_boxes.shape[0] == 0:
-            continue
+        # if pred_boxes.shape[0] == 0:
+        #     continue
 
         # Remove padding (-1) and batch dimension from predicted / GT boxes
         # and transfer to CPU. Indexing `[0]` here removes batch dimension:
