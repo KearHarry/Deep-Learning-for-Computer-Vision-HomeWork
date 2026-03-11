@@ -40,8 +40,12 @@ def compute_saliency_maps(X, y, model):
     # the gradients with a backward pass.                                        #
     # Hint: X.grad.data stores the gradients                                     #
     ##############################################################################
-    # Replace "pass" statement with your code
-    pass
+    scores = model(X)
+    correct_scores = scores.gather(1, y.view(-1, 1)).squeeze()
+    loss = correct_scores.sum()
+    loss.backward()
+
+    saliency, _ = torch.max(X.grad.data.abs(), dim=1)
     ##############################################################################
     #               END OF YOUR CODE                                             #
     ##############################################################################
@@ -83,8 +87,28 @@ def make_adversarial_attack(X, target_y, model, max_iter=100, verbose=True):
     # attack in fewer than 100 iterations of gradient ascent.                    #
     # You can print your progress over iterations to check your algorithm.       #
     ##############################################################################
-    # Replace "pass" statement with your code
-    pass
+    for i in range(max_iter):
+        scores = model(X_adv)
+
+        # Check if fooled
+        _, preds = scores.max(1)
+        if preds == target_y:
+            break
+
+        target_score = scores[0, target_y]
+        target_score.backward()
+
+        g = X_adv.grad.data
+        if g.norm() > 0:
+            dX = learning_rate * g / g.norm()
+            X_adv.data += dX
+
+        X_adv.grad.data.zero_()
+
+        if verbose and i % 10 == 0:
+            print('Iteration %d: target score %.3f, max score %.3f' % (
+                i, target_score, scores.max()))
+
     ##############################################################################
     #                             END OF YOUR CODE                               #
     ##############################################################################
@@ -118,8 +142,11 @@ def class_visualization_step(img, target_y, model, **kwargs):
     # the generated image using gradient ascent & reset img.grad to zero   #
     # after each step.                                                     #
     ########################################################################
-    # Replace "pass" statement with your code
-    pass
+    loss = model(img)[0, target_y] - l2_reg*torch.norm(img)**2
+    loss.backward()
+
+    img.data += learning_rate * img.grad.data
+    img.grad.data.zero_()
     ########################################################################
     #                             END OF YOUR CODE                         #
     ########################################################################

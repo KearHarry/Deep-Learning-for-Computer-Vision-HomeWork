@@ -15,3 +15,5 @@ venv/
 .env
 .venv
 
+/A5/datasets
+/A6/datasets
